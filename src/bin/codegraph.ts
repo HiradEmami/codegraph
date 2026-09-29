@@ -1292,7 +1292,9 @@ program
   .description('Explore an area: relevant symbols\' source + call paths in one shot (same output as the codegraph_explore MCP tool)')
   .option('-p, --path <path>', 'Project path')
   .option('--max-files <number>', 'Maximum number of files to include source from')
-  .action(async (queryParts: string[], options: { path?: string; maxFiles?: string }) => {
+  .option('--max-tokens <number>', 'Return a JSON evidence packet capped by the selected tokenizer (metadata included)')
+  .option('--tokenizer <encoding>', 'Explicit o200k_base or cl100k_base encoding; required with --max-tokens')
+  .action(async (queryParts: string[], options: { path?: string; maxFiles?: string; maxTokens?: string; tokenizer?: string }) => {
     const projectPath = resolveProjectPath(options.path);
 
     try {
@@ -1308,9 +1310,15 @@ program
 
       const args: Record<string, unknown> = { query: queryParts.join(' ') };
       if (options.maxFiles) args.maxFiles = parseInt(options.maxFiles, 10);
+      if (options.maxTokens !== undefined || options.tokenizer !== undefined) {
+        args.tokenBudget = { maxTokens: Number(options.maxTokens), encoding: options.tokenizer };
+      }
       const result = await handler.execute('codegraph_explore', args);
 
-      console.log(result.content[0]?.text ?? '');
+      // A bounded JSON packet is counted byte-for-byte as text: do not append
+      // console.log's newline outside the declared token budget.
+      if (args.tokenBudget !== undefined) process.stdout.write(result.content[0]?.text ?? '');
+      else console.log(result.content[0]?.text ?? '');
       cg.destroy();
       if (result.isError) process.exit(1);
     } catch (err) {

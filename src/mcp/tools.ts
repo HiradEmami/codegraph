@@ -50,6 +50,8 @@ import {
 } from '../graph/named-symbol-flow';
 import { getUpdateNotice } from '../upgrade/update-check';
 import { ExploreDiagnostics } from './explore-diagnostics';
+import { ContextBudgetError, parseContextTokenBudget, type ContextTokenBudget } from '../context/token-budget';
+import { boundExploreText } from './explore-token-budget';
 import {
   EXPLORE_EMISSION_KEY,
   EXPLORE_SESSION_VIEW_ARG,
@@ -1126,6 +1128,11 @@ interface PropertySchema {
   description: string;
   enum?: string[];
   default?: unknown;
+  properties?: Record<string, PropertySchema>;
+  required?: string[];
+  additionalProperties?: boolean;
+  minimum?: number;
+  maximum?: number;
 }
 
 /**
@@ -1341,6 +1348,16 @@ export const tools: ToolDefinition[] = [
           type: 'number',
           description: 'Maximum number of files to include source code from (default: 12)',
           default: 12,
+        },
+        tokenBudget: {
+          type: 'object',
+          description: 'Optional exact encoding budget. Returns a self-contained JSON evidence packet; the cap includes its metadata and notices, excluding MCP/host framing. Unset preserves Markdown output.',
+          properties: {
+            maxTokens: { type: 'integer', description: 'Maximum serialized packet tokens; too-small envelopes fail explicitly.', minimum: 1, maximum: 1000000 },
+            encoding: { type: 'string', description: 'Explicit tokenizer encoding; model names are not inferred.', enum: ['o200k_base', 'cl100k_base'] },
+          },
+          required: ['maxTokens', 'encoding'],
+          additionalProperties: false,
         },
         projectPath: projectPathProperty,
       },
@@ -2105,7 +2122,11 @@ export class ToolHandler {
     args: Record<string, unknown>,
     sessionState?: ExploreSessionState,
   ): Promise<ToolResult> {
+    let tokenBudget: ContextTokenBudget | undefined;
     try {
+      if (toolName === 'codegraph_explore' && args.tokenBudget !== undefined) {
+        tokenBudget = parseContextTokenBudget(args.tokenBudget);
+      }
       // Block the first tool call on the engine's post-open reconcile so we
       // never serve rows for files deleted/edited while no MCP server was
       // running. The wait is time-boxed (#905): a huge-repo reconcile takes
@@ -2179,14 +2200,53 @@ export class ToolHandler {
       // Record + STRIP before anything else touches the result: the emission is
       // internal bookkeeping and must never reach the client, whether or not a
       // caller passed session state.
+      if (tokenBudget && !raw.isError) {
+        // Apply the cap LAST, after main-thread freshness/worktree notices, and
+        // record only source that actually survives it. Workers return the same
+        // numbered raw render plus the ordinary emission inventory.
+        const withWorktree = this.withWorktreeNotice(raw, args.projectPath as string | undefined);
+        const withNotices = this.withStalenessNotice(withWorktree, args.projectPath as string | undefined);
+        const original = raw.content[0]?.text ?? '';
+        const decorated = withNotices.content[0]?.text ?? '';
+        const at = decorated.indexOf(original);
+        const notices = at >= 0
+          ? [decorated.slice(0, at).trim(), decorated.slice(at + original.length).trim()].filter(Boolean)
+          : [decorated];
+        const bounded = boundExploreText(original, raw[EXPLORE_EMISSION_KEY], tokenBudget, notices);
+        const result: ToolResult = this.textResult(bounded.text);
+        if (bounded.emission) result[EXPLORE_EMISSION_KEY] = bounded.emission;
+        return this.takeExploreEmission(result, sessionState);
+      }
       const result = this.takeExploreEmission(raw, sessionState);
       const withWorktree = this.withWorktreeNotice(result, args.projectPath as string | undefined);
       return this.withStalenessNotice(withWorktree, args.projectPath as string | undefined);
     } catch (err) {
+      if (err instanceof ContextBudgetError) {
+        // Protocol failures are distinct from successful budgeted packets. The
+        // fixed, non-echoing error stays small even for hostile input; a budget
+        // of one token cannot itself contain a meaningful JSON error envelope.
+        return {
+          isError: true,
+          content: [{ type: 'text', text: JSON.stringify({ schemaVersion: 1, error: { code: err.code, message: err.message } }) }],
+        };
+      }
       // Expected condition, not a malfunction: answer as a SUCCESS so the
       // agent keeps trusting the toolset for projects that ARE indexed.
       // (An isError here teaches session-long abandonment — see NotIndexedError.)
       if (err instanceof NotIndexedError) {
+        if (tokenBudget) {
+          try {
+            return this.textResult(boundExploreText(err.message, undefined, tokenBudget).text);
+          } catch (budgetError) {
+            if (budgetError instanceof ContextBudgetError) {
+              return {
+                isError: true,
+                content: [{ type: 'text', text: JSON.stringify({ schemaVersion: 1, error: { code: budgetError.code, message: budgetError.message } }) }],
+              };
+            }
+            return this.errorResult('The context packet could not be encoded.');
+          }
+        }
         return this.textResult(err.message);
       }
       // Security refusal: a clean error, no retry encouragement.
@@ -3341,7 +3401,7 @@ export class ToolHandler {
     // entirely under `CODEGRAPH_EXPLORE_DEDUP=0`.
     const priorCalls = viewForProject(readExploreSessionView(args), projectRoot);
     diag?.noteSession(priorCalls);
-    const dedupEnabled = exploreDedupEnabled() && (priorCalls?.calls.length ?? 0) > 0;
+    const dedupEnabled = args.tokenBudget === undefined && exploreDedupEnabled() && (priorCalls?.calls.length ?? 0) > 0;
 
     // Cross-call dedup accounting (CG-18). `newSourceChars` is the load-bearing
     // one: a response whose source is ENTIRELY back-references is the shape that
@@ -4616,7 +4676,7 @@ export class ToolHandler {
 
       const fileLines = fileContent.split('\n');
       const lang = group.nodes[0]?.language || '';
-      const withLineNumbers = exploreLineNumbersEnabled();
+      const withLineNumbers = args.tokenBudget !== undefined || exploreLineNumbersEnabled();
       // Language-neutral separator between two non-contiguous slices of one file
       // (no `//` — not a comment in Python, Ruby, etc.). With line numbers on,
       // the line-number jump also signals the gap.
@@ -4873,7 +4933,8 @@ export class ToolHandler {
             }
             if (lineNo <= coveredUntil) continue;
             if (sigCount >= SIG_MAX) { sigDropped++; continue; }
-            const sig = (fileLines[lineNo - 1] || '').trim();
+            const sig = args.tokenBudget !== undefined
+              ? (fileLines[lineNo - 1] || '') : (fileLines[lineNo - 1] || '').trim();
             if (sig) {
               skel.push({
                 range: { start: lineNo, end: lineNo },

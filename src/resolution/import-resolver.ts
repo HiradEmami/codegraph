@@ -11,6 +11,8 @@ import { UnresolvedRef, ResolvedRef, ResolutionContext, ImportMapping, ReExport 
 import { applyAliases } from './path-aliases';
 import { extractLocalExportAliases } from './alias-binding';
 import { resolveWorkspaceImport } from './workspace-packages';
+import { clearPythonModuleMap, resolvePythonModule } from './python-modules';
+import { clearPythonBindings, resolvePythonBinding } from './python-bindings';
 import {
   resolveMethodOnType,
   resolveObjectLiteralMember,
@@ -148,6 +150,8 @@ function getFileExportIndex(filePath: string, context: ResolutionContext): FileE
 
 /** Drop the per-context memo tables (see ReferenceResolver.clearCaches). */
 export function clearImportResolverMemos(context: ResolutionContext): void {
+  clearPythonModuleMap(context);
+  clearPythonBindings(context);
   importPathMemos.delete(context);
   exportedSymbolMemos.delete(context);
   fileExportIndexes.delete(context);
@@ -180,6 +184,7 @@ function resolveImportPathUncached(
   language: Language,
   context: ResolutionContext
 ): string | null {
+  if (language === 'python') return resolvePythonModule(importPath, fromFile, context);
   // COBOL COPY/EXEC SQL INCLUDE names a copybook member, not a path — the
   // compiler searches a library, so we match against indexed file basenames.
   // Must run before isExternalImport: a bare member name would otherwise be
@@ -1449,6 +1454,7 @@ export function resolveViaImport(
   ref: UnresolvedRef,
   context: ResolutionContext
 ): ResolvedRef | null {
+  if (ref.language === 'python') return resolvePythonBinding(ref, context) ?? null;
   // C/C++ #include references — resolve directly to the included file
   // (file→file edge), bypassing symbol lookup. The extractor emits these
   // with `referenceKind: 'imports'` and `referenceName: <include path>`
@@ -1597,15 +1603,6 @@ export function resolveViaImport(
   // `from . import certs`, `mod.func()` after `import mod`. The receiver names a
   // submodule (a file), not a symbol, so the generic symbol lookup below would
   // search the *package* for `certs` instead of looking inside the module.
-  if (ref.language === 'python') {
-    const pyResult = resolvePythonModuleMember(ref, imports, context);
-    if (pyResult) return pyResult;
-    // Absolute dotted module import: `import conduit.apps.articles.signals`
-    // (the standard Django AppConfig.ready() signal-registration pattern, and
-    // any side-effect `import pkg.mod`). Map the dotted path to its file.
-    const pyModResult = resolvePythonAbsoluteModule(ref, context);
-    if (pyModResult) return pyModResult;
-  }
 
   // Rust qualified path: resolve the module prefix of `crate::m::Item` /
   // `self::sub::Item` / `super::m::func` to a file, then find the leaf symbol in
@@ -1632,7 +1629,6 @@ export function resolveViaImport(
   // records the dependency). A named TS/JS import returns null here and falls
   // through to symbol resolution below.
   if (
-    ref.language === 'python' ||
     ref.language === 'typescript' ||
     ref.language === 'tsx' ||
     ref.language === 'javascript' ||
@@ -1746,67 +1742,6 @@ export function resolveViaImport(
  * imported *value* (`helper.attr` where `helper` is a function) falls through
  * to the other strategies untouched.
  */
-function resolvePythonModuleMember(
-  ref: UnresolvedRef,
-  imports: ImportMapping[],
-  context: ResolutionContext
-): ResolvedRef | null {
-  const dotIdx = ref.referenceName.indexOf('.');
-  if (dotIdx <= 0) return null;
-  const receiver = ref.referenceName.substring(0, dotIdx);
-  // The immediate member of the module (first segment after the receiver).
-  const member = ref.referenceName.substring(dotIdx + 1).split('.')[0];
-  if (!member) return null;
-
-  for (const imp of imports) {
-    if (imp.localName !== receiver) continue;
-
-    // `import mod` / `import numpy as np` bind the module at `source` itself;
-    // `from . import certs` / `from pkg import mod` bind a SUBMODULE whose
-    // dotted path is the source joined with the imported name.
-    //
-    // Join with the EXPORTED name, not the local one: under
-    // `from pkg import mod as alias` the receiver is `alias` but the module on
-    // disk is `pkg.mod`, and building `pkg.alias` looked for a file that does
-    // not exist — so the aliased form dropped its `calls` edge while the plain
-    // form (where the two names coincide) worked (#1626). For an unaliased
-    // import the two are identical, so this changes nothing there.
-    const moduleName = imp.exportedName === '*' ? imp.localName : imp.exportedName;
-    const modulePath = imp.isNamespace
-      ? imp.source
-      : imp.source.endsWith('.')
-        ? imp.source + moduleName
-        : imp.source + '.' + moduleName;
-
-    // resolveImportPath only maps RELATIVE dotted paths (`.mod`, `..pkg.mod`); an
-    // ABSOLUTE package path (`pkg.module` from `from pkg import module`, or a bare
-    // `import pkg.mod`) resolves to null there, so fall back to the dotted-module
-    // file lookup — the same asymmetry resolveModuleImportToFile already handles
-    // for the file→file import edge. Without this, a `module.func()` call after
-    // `from pkg import module` dropped its `calls` edge even though the import
-    // edge resolved (#578).
-    let resolvedPath = resolveImportPath(modulePath, ref.filePath, ref.language, context);
-    if (!resolvedPath) {
-      resolvedPath = findPythonModuleFile(modulePath, context, ref.filePath)?.filePath ?? null;
-    }
-    if (!resolvedPath || resolvedPath === ref.filePath) continue;
-
-    // Find the member as a top-level definition in the module file. Exclude
-    // `method` so `mod.foo` never lands on a same-named class method.
-    const target = context.getNodesInFile(resolvedPath).find(
-      (n) =>
-        n.name === member &&
-        (n.kind === 'function' ||
-          n.kind === 'class' ||
-          n.kind === 'variable' ||
-          n.kind === 'constant')
-    );
-    if (target) {
-      return { original: ref, targetNodeId: target.id, confidence: 0.85, resolvedBy: 'import' };
-    }
-  }
-  return null;
-}
 
 /**
  * Resolve a whole-MODULE import to that module's file (a file→file dependency).
@@ -2029,19 +1964,6 @@ function findPythonModuleFile(
  * the Django `AppConfig.ready(): import myapp.signals` pattern and any
  * side-effect module import.
  */
-function resolvePythonAbsoluteModule(
-  ref: UnresolvedRef,
-  context: ResolutionContext
-): ResolvedRef | null {
-  if (ref.referenceKind !== 'imports') return null;
-  // Only a DOTTED `import a.b.c` ref carries its full module path. A bare leaf
-  // (`from app.api.routes import authentication`) is ambiguous on its own — three
-  // `authentication.py` files may exist — so leave it to resolveModuleImportToFile,
-  // which uses the import's source (`app.api.routes`) to build the full path.
-  if (!ref.referenceName.includes('.')) return null;
-  const hit = findPythonModuleFile(ref.referenceName, context, ref.filePath);
-  return hit ? { original: ref, targetNodeId: hit.id, confidence: 0.9, resolvedBy: 'import' } : null;
-}
 
 /**
  * Resolve a Rust qualified reference `A::B::C` by mapping the MODULE prefix

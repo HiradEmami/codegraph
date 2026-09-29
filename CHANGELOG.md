@@ -25,6 +25,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New Features
 
+- Explore responses can use an explicit tokenizer and token limit, returning attributed source evidence with duplicate removal and visible omissions.
+
 - **Codex and Astra read project guidance from `AGENTS.md`.** The canonical agent guide now lives in `AGENTS.md` (with a nested `docs/AGENTS.md` for long validation notes); `CLAUDE.md` is a thin `@AGENTS.md` wrapper for Claude Code. Codex/Astra no longer miss the old CLAUDE-only instructions.
 
 - **A big screen's picture stops wrapping into a column.** How wide a screen's lines run before they wrap was worked out with a formula, and the formula was wrong for the way these pictures are actually drawn: a part of a screen spends lines on its own structure — a step that fires things gets a line to itself, and what it fires starts another — so estimating the lines from the boxes alone badly undercounted them, and one screen's 98 boxes wrapped into a 4,356px column. Laying a picture out is cheap and exact, so the widths are now simply tried and the one that comes out closest to the shape of a window is kept. Across one app's 51 screens the tallest picture went from 4,356px to 3,796px, total height fell 8%, and — because a shorter picture is also a picture whose lines have less far to go — lines running over other boxes fell by a third and lines crossing each other went from 13 to 5.
@@ -144,6 +146,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Trails are plain JSON, one file per trail, under `.codegraph/ui/trails/` — already ignored by git, so they stay yours by default. **Export** hands you the file if you'd rather commit one for the team. This is the only thing the viewer writes: it still never indexes, never changes your graph, and never touches a line of your code. Start it with `codegraph ui --read-only` and it won't write even that — saved trails can still be opened, just not saved or deleted.
 
 ### Fixes
+
+- Python calls follow their imported module, alias and scope, including supported explicit package mappings, instead of drifting to unrelated same-named definitions; re-index existing projects to refresh their relationships.
 
 - Rust calls on `self` now stay with the enclosing type instead of linking to an unrelated type’s same-named method. Thanks @L4XB. (#1861)
 

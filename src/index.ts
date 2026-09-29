@@ -60,9 +60,15 @@ import { CodeGraphPackageVersion } from './mcp/version';
 import { extractSegmentSearchWords, segmentLookupVariants, splitIdentifierSegments } from './search/identifier-segments';
 import { createYielder } from './resolution/cooperative-yield';
 import { minRefsForPool } from './resolution/resolver-pool';
+import { pythonConfigurationFingerprint } from './resolution/python-modules';
 
 // Re-export types for consumers
 export * from './types';
+export {
+  buildBoundedContextPacket, countContextTokens, parseContextTokenBudget, ContextBudgetError,
+  type ContextEncoding, type ContextTokenBudget, type ContextEvidence,
+  type SourceEvidence, type TextEvidence, type BoundedContextPacket,
+} from './context/token-budget';
 // Storage building blocks for embedded/SDK consumers that drive the graph
 // directly (open a DB, run prepared queries) rather than through the CodeGraph
 // facade. Exposed from the package entry so they no longer require deep imports
@@ -732,6 +738,10 @@ export class CodeGraph {
           }
         } catch { /* metadata is advisory — never fail an index over it */ }
 
+        result.errors.push(...this.resolver.getPythonDiagnostics());
+        if (result.success && result.filesErrored === 0) {
+          this.queries.setMetadata('python_configuration_sha256', pythonConfigurationFingerprint(this.projectRoot));
+        }
         return result;
       } finally {
         // Restore the auto-checkpoint interval AFTER the fold-up above so the
@@ -833,6 +843,24 @@ export class CodeGraph {
 
         const result = await this.orchestrator.sync(options.onProgress, options.paths, backpressure);
 
+        // Package identity can change without any .py bytes changing. Re-read
+        // all indexed Python files only when configuration changes; this
+        // removes old outgoing edges and recreates the original references.
+        const pythonConfigHash = pythonConfigurationFingerprint(this.projectRoot);
+        const pythonConfigChanged = this.queries.getMetadata('python_configuration_sha256') !== pythonConfigHash;
+        if (pythonConfigChanged) {
+          this.resolver.clearCaches();
+          const pythonFiles = this.queries.getAllFilePaths().filter((file) => file.endsWith('.py'));
+          const refreshed = await this.orchestrator.indexFiles(pythonFiles, true);
+          result.pythonFilesReindexed = refreshed.filesIndexed;
+          result.nodesUpdated += refreshed.nodesCreated;
+          result.changedFilePaths = [...new Set([...(result.changedFilePaths ?? []), ...pythonFiles])];
+          result.errors = refreshed.errors;
+          if (refreshed.filesErrored > 0) {
+            result.failedFilePaths = [...new Set([...(result.failedFilePaths ?? []), ...refreshed.errors.filter((error) => error.severity === 'error' && error.filePath).map((error) => error.filePath!)])];
+          }
+        }
+
         // Fold the store phase's WAL BEFORE the post-store reads below
         // (resolution reads on the main thread) — same rationale as
         // indexAll's fold between store and resolution.
@@ -842,7 +870,7 @@ export class CodeGraph {
         // every sync that touched files so edits to `app.module.ts` propagate
         // to controllers in unchanged files. The pass is idempotent and cheap
         // (regex over *.module.ts only).
-        if (result.filesAdded > 0 || result.filesModified > 0) {
+        if (result.filesAdded > 0 || result.filesModified > 0 || pythonConfigChanged) {
           this.resolver.runPostExtract();
         } else if (result.filesRemoved > 0) {
           // A pure-removal sync still resolves refs below — the deletion path
@@ -856,7 +884,7 @@ export class CodeGraph {
         }
 
         // Resolve references if files were updated
-        const filesChanged = result.filesAdded > 0 || result.filesModified > 0;
+        const filesChanged = result.filesAdded > 0 || result.filesModified > 0 || pythonConfigChanged;
         if (filesChanged) {
           if (result.changedFilePaths) {
             // Scope resolution to changed files (git fast path — bounded set)
@@ -1037,6 +1065,12 @@ export class CodeGraph {
         }
 
         this.orchestrator.finishGitIndexState(gitState, fullReconcile, result.failedFilePaths);
+
+        const pythonDiagnostics = this.resolver.getPythonDiagnostics();
+        if (pythonDiagnostics.length) result.errors = [...(result.errors ?? []), ...pythonDiagnostics];
+        if (pythonConfigChanged && !result.failedFilePaths?.length && !result.errors?.some((error) => error.severity === 'error')) {
+          this.queries.setMetadata('python_configuration_sha256', pythonConfigHash);
+        }
 
         return result;
       } finally {

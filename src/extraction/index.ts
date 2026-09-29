@@ -119,6 +119,10 @@ export interface IndexResult {
  * Result of a sync operation
  */
 export interface SyncResult {
+  /** Resolution/configuration warnings and errors from incremental refresh. */
+  errors?: ExtractionError[];
+  /** Unchanged Python files re-extracted after package configuration changed. */
+  pythonFilesReindexed?: number;
   filesChecked: number;
   filesAdded: number;
   filesModified: number;
@@ -2509,7 +2513,7 @@ export class ExtractionOrchestrator {
   /**
    * Index specific files
    */
-  async indexFiles(filePaths: string[]): Promise<IndexResult> {
+  async indexFiles(filePaths: string[], force = false): Promise<IndexResult> {
     const startTime = Date.now();
     const errors: ExtractionError[] = [];
     let filesIndexed = 0;
@@ -2519,7 +2523,7 @@ export class ExtractionOrchestrator {
     let totalEdges = 0;
 
     for (const filePath of filePaths) {
-      const result = await this.indexFile(filePath);
+      const result = await this.indexFile(filePath, force);
 
       if (result.errors.length > 0) {
         errors.push(...result.errors);
@@ -2556,7 +2560,7 @@ export class ExtractionOrchestrator {
   /**
    * Index a single file
    */
-  async indexFile(relativePath: string): Promise<ExtractionResult> {
+  async indexFile(relativePath: string, force = false): Promise<ExtractionResult> {
     // Indexing read: follow in-root symlinks (the `../` guard still applies), #935.
     const fullPath = validatePathWithinRoot(this.rootDir, relativePath, { allowSymlinkEscape: true });
 
@@ -2593,7 +2597,7 @@ export class ExtractionOrchestrator {
       };
     }
 
-    return this.indexFileWithContent(relativePath, content, stats);
+    return this.indexFileWithContent(relativePath, content, stats, force);
   }
 
   /**
@@ -2603,7 +2607,8 @@ export class ExtractionOrchestrator {
   async indexFileWithContent(
     relativePath: string,
     content: string,
-    stats: fs.Stats
+    stats: fs.Stats,
+    force = false
   ): Promise<ExtractionResult> {
     // Prevent `../` traversal; follow in-root symlinks like the directory walk (#935).
     const fullPath = validatePathWithinRoot(this.rootDir, relativePath, { allowSymlinkEscape: true });
@@ -2636,7 +2641,7 @@ export class ExtractionOrchestrator {
         ],
         durationMs: 0,
       };
-      await this.storeExtractionResult(relativePath, content, language, stats, result, createYielder());
+      await this.storeExtractionResult(relativePath, content, language, stats, result, createYielder(), force);
       return result;
     }
 
@@ -2658,7 +2663,7 @@ export class ExtractionOrchestrator {
     const result = extractFromSource(relativePath, content, language, frameworkNames);
 
     // Store in database
-    await this.storeExtractionResult(relativePath, content, language, stats, result, createYielder());
+    await this.storeExtractionResult(relativePath, content, language, stats, result, createYielder(), force);
 
     return result;
   }
@@ -2700,7 +2705,8 @@ export class ExtractionOrchestrator {
     language: Language,
     stats: fs.Stats,
     result: ExtractionResult,
-    onYield?: MaybeYield
+    onYield?: MaybeYield,
+    force = false
   ): Promise<void> {
     // A kernel result can arrive as an undecoded buffer transport (empty
     // node/edge arrays, tables riding in kernelBuffers). Decode it before
@@ -2724,7 +2730,7 @@ export class ExtractionOrchestrator {
     // successful retry's symbols — a permanent empty file presented as
     // recovered (the #1541 wipe, reintroduced through the marker path).
     const existingFile = this.queries.getFileByPath(filePath);
-    if (existingFile && existingFile.contentHash === contentHash) {
+    if (!force && existingFile && existingFile.contentHash === contentHash) {
       const existingIsMarker =
         existingFile.nodeCount === 0 && (existingFile.errors?.length ?? 0) > 0;
       const incomingHasContent = result.nodes.length > 0;

@@ -4704,7 +4704,7 @@ export class TreeSitterExtractor {
             const SKIP_RECEIVERS = new Set(['self', 'this', 'cls', 'super']);
             if (receiver && (receiver.type === 'identifier' || receiver.type === 'simple_identifier' || receiver.type === 'field_identifier')) {
               const receiverName = getNodeText(receiver, this.source);
-              if (!SKIP_RECEIVERS.has(receiverName)) {
+              if (!SKIP_RECEIVERS.has(receiverName) || (this.language === 'python' && (receiverName === 'self' || receiverName === 'cls'))) {
                 calleeName = `${receiverName}.${methodName}`;
               } else {
                 calleeName = methodName;
@@ -4811,6 +4811,12 @@ export class TreeSitterExtractor {
               // component type from its declaration (#1108). Gated to these
               // scope keywords: such calls previously emitted a bare method
               // name, which either failed to resolve or resolved ambiguously.
+              calleeName = `${getNodeText(receiver, this.source)}.${methodName}`;
+            } else if (this.language === 'python' && receiver?.type === 'attribute' &&
+              /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(getNodeText(receiver, this.source))) {
+              // `import pkg.engine; pkg.engine.run()` must retain its module
+              // path. A bare `run` erases binding evidence and invites a
+              // same-name match against an unrelated function.
               calleeName = `${getNodeText(receiver, this.source)}.${methodName}`;
             } else if (
               (this.language === 'typescript' ||
@@ -5605,6 +5611,13 @@ export class TreeSitterExtractor {
     if (!this.extractor) return;
 
     const visitForCallsAndStructure = (node: SyntaxNode): void => {
+      // Python imports can bind names inside functions. Preserve the AST
+      // statement and scope just as for module imports, so aliases do not
+      // leak into sibling functions or disappear into global name matching.
+      if (this.language === 'python' && this.extractor!.importTypes.includes(node.type)) {
+        this.extractImport(node);
+        return;
+      }
       const nodeType = node.type;
 
       // Function-as-value capture (#756) — function bodies are walked here,

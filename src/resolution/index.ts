@@ -23,6 +23,8 @@ import { matchJsStoreBindingCall, isUnresolvedJsMemberCall, isVisibleAcrossFiles
 import { resolveViaImport, resolvePhpImportedStaticCall, resolveJvmImport, extractImportMappings, extractReExports, loadCppIncludeDirs, isPhpIncludePathRef, isCobolCopybookRef, isNixPathImportRef, isBoundToOutOfRepoImport, clearImportResolverMemos, resolveImportPath } from './import-resolver';
 import { ResolverPool, minRefsForPool } from './resolver-pool';
 import { resolveAliasBinding } from './alias-binding';
+import { resolvePythonBinding } from './python-bindings';
+import { getPythonModuleMap } from './python-modules';
 import { detectFrameworks } from './frameworks';
 import { synthesizeCallbackEdges } from './callback-synthesizer';
 import { createYielder, type MaybeYield } from './cooperative-yield';
@@ -314,6 +316,16 @@ export class ReferenceResolver {
   initialize(): void {
     this.frameworks = detectFrameworks(this.context);
     this.clearCaches();
+  }
+
+  /** Explicit map diagnostics travel with index/sync results, never stdout. */
+  getPythonDiagnostics(): import('../types').ExtractionError[] {
+    return getPythonModuleMap(this.context).diagnostics.map((message) => ({
+      message,
+      filePath: 'pyproject.toml',
+      severity: 'warning',
+      code: 'python_package_map_unsupported',
+    }));
   }
 
   /**
@@ -896,6 +908,10 @@ export class ReferenceResolver {
   }
 
   private resolveOneInner(ref: UnresolvedRef): ResolvedRef | null {
+    // Imported/lexical Python names own their identity, including a failed
+    // lookup. A global name match may never override that evidence.
+    const pythonBinding = resolvePythonBinding(ref, this.context);
+    if (pythonBinding !== undefined) return pythonBinding;
     // Skip built-in/external references
     if (this.isBuiltInOrExternal(ref)) {
       return null;

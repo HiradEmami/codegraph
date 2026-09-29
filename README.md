@@ -909,3 +909,12 @@ MIT
 [Report Bug](https://github.com/colbymchenry/codegraph/issues) · [Request Feature](https://github.com/colbymchenry/codegraph/issues)
 
 </div>
+
+## Pelagion source baseline
+
+[`.pelagion-src-version`](.pelagion-src-version) records the initial source baseline for
+`feat/init-pelagion-takeover`. It identifies the original upstream and the Pelagion
+fork by repository name and ID. It records their main/master branch commit hashes,
+commit timestamps, tags and declared versions where available. The fork commit is
+the exact base of the initial feature branch. This is a fixed provenance record;
+it does not update automatically when branches advance. Git history preserves it.

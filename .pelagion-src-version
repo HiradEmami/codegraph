@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-09-29T10:08:05+00:00",
+  "purpose": "Immutable initial Pelagion takeover source baseline",
+  "feature_branch": "feat/init-pelagion-takeover",
+  "upstream": {
+    "repository": {
+      "id": 1137078255,
+      "node_id": "R_kgDOQ8Zv7w",
+      "name": "codegraph",
+      "full_name": "colbymchenry/codegraph",
+      "html_url": "https://github.com/colbymchenry/codegraph",
+      "clone_url": "https://github.com/colbymchenry/codegraph.git",
+      "default_branch": "main",
+      "created_at": "2026-01-18T21:45:37Z",
+      "updated_at": "2026-09-29T09:45:30Z",
+      "pushed_at": "2026-09-29T05:08:55Z",
+      "fork": false,
+      "private": false,
+      "size": 32898
+    },
+    "branch": "main",
+    "commit": {
+      "sha": "f4ddf508516332419ea3c95702810765936cf679",
+      "tree_sha": "159eeae963c8177368016ea00e0182bc43c1f3d6",
+      "author_timestamp": "2026-09-29T05:06:45Z",
+      "committer_timestamp": "2026-09-29T05:06:45Z",
+      "subject": "docs(changelog): promote [Unreleased] into [1.6.1]",
+      "reachable_commit_count": 1137,
+      "exact_tags": [
+        "v1.6.1"
+      ],
+      "describe": "v1.6.1",
+      "declared_versions": {
+        "package.json": "1.6.1"
+      }
+    }
+  },
+  "fork": {
+    "repository": {
+      "id": 1389220300,
+      "node_id": "R_kgDOUs3RzA",
+      "name": "codegraph",
+      "full_name": "HiradEmami/codegraph",
+      "html_url": "https://github.com/HiradEmami/codegraph",
+      "clone_url": "https://github.com/HiradEmami/codegraph.git",
+      "default_branch": "main",
+      "created_at": "2026-09-26T13:00:00Z",
+      "updated_at": "2026-09-26T13:00:00Z",
+      "pushed_at": "2026-09-23T21:06:11Z",
+      "fork": true,
+      "private": false,
+      "size": 29141
+    },
+    "branch": "main",
+    "commit": {
+      "sha": "f4ddf508516332419ea3c95702810765936cf679",
+      "tree_sha": "159eeae963c8177368016ea00e0182bc43c1f3d6",
+      "author_timestamp": "2026-09-29T05:06:45Z",
+      "committer_timestamp": "2026-09-29T05:06:45Z",
+      "subject": "docs(changelog): promote [Unreleased] into [1.6.1]",
+      "reachable_commit_count": 1137,
+      "exact_tags": [
+        "v1.6.1"
+      ],
+      "describe": "v1.6.1",
+      "declared_versions": {
+        "package.json": "1.6.1"
+      }
+    },
+    "previous_remote_commit": "ba3c21e50d9129d2f5f3843ec3728868ae6d47a1"
+  },
+  "network_source": {
+    "id": 1137078255,
+    "node_id": "R_kgDOQ8Zv7w",
+    "name": "codegraph",
+    "full_name": "colbymchenry/codegraph",
+    "html_url": "https://github.com/colbymchenry/codegraph",
+    "clone_url": "https://github.com/colbymchenry/codegraph.git",
+    "default_branch": "main",
+    "created_at": "2026-01-18T21:45:37Z",
+    "updated_at": "2026-09-29T09:45:30Z",
+    "pushed_at": "2026-09-29T05:08:55Z",
+    "fork": false,
+    "private": false,
+    "size": 32898
+  },
+  "feature_base_commit": "f4ddf508516332419ea3c95702810765936cf679",
+  "source_observed_at_utc": "2026-09-29T10:02:11+00:00",
+  "historical_fork_creation_commit": null,
+  "notes": [
+    "The GitHub repository ID and node ID identify each repository, not a commit.",
+    "Reachable commit count is a history count, not a release number. Exact tags and declared package versions may be absent.",
+    "GitHub creation timestamps do not establish the original fork-creation commit.",
+    "This baseline does not update automatically after later merges. Git history preserves subsequent edits.",
+    "The feature commit containing this file is recorded in Git history; it cannot contain its own hash."
+  ]
+}

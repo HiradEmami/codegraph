@@ -178,7 +178,7 @@ export class CodeGraph {
     this.queries = queries;
     this.projectRoot = projectRoot;
     this.fileLock = new FileLock(
-      path.join(getCodeGraphDir(projectRoot), 'codegraph.lock')
+      path.join(path.dirname(db.getPath()), 'codegraph.lock')
     );
     this.wireLayers();
   }
@@ -254,7 +254,7 @@ export class CodeGraph {
   /** The database file at the path was written within the recreate grace window. */
   private isFreshlyRecreated(): boolean {
     try {
-      return Date.now() - fs.statSync(getDatabasePath(this.projectRoot)).mtimeMs < CodeGraph.RECREATE_GRACE_MS;
+      return Date.now() - fs.statSync(this.db.getPath()).mtimeMs < CodeGraph.RECREATE_GRACE_MS;
     } catch {
       return false;
     }
@@ -365,6 +365,29 @@ export class CodeGraph {
     const queries = new QueryBuilder(db.getDb());
 
     return new CodeGraph(db, queries, resolvedRoot);
+  }
+
+  /**
+   * Internal Pelagion entry point for a database outside the indexed workspace.
+   * The generation store owns that path and publishes only a sealed database.
+   */
+  static async openGeneration(
+    projectRoot: string,
+    databasePath: string,
+    mode: 'create' | 'update' | 'read',
+  ): Promise<CodeGraph> {
+    await initGrammars();
+    const db = mode === 'create'
+      ? DatabaseConnection.initialize(databasePath)
+      : DatabaseConnection.open(databasePath, { readOnly: mode === 'read' });
+    return new CodeGraph(db, new QueryBuilder(db.getDb()), path.resolve(projectRoot));
+  }
+
+  /** Finish writes before handing a database to the generation publisher. */
+  sealGeneration(): void {
+    const mode = this.db.getDb().pragma('journal_mode = DELETE', { simple: true });
+    if (mode !== 'delete') throw new Error('The generation database still has active journal readers.');
+    this.close();
   }
 
   /**

@@ -38,10 +38,14 @@ export async function* readFrames(input: AsyncIterable<Buffer>): AsyncGenerator<
       if (bodyBytes === body.length) {
         let parsed: unknown;
         try {
-          parsed = JSON.parse(decoder.decode(body));
+          parsed = JSON.parse(decoder.decode(body), (_key: string, value: unknown) => {
+            if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('Nonfinite JSON number.');
+            return value;
+          });
         } catch {
           throw new WireError('invalid_json', 'Expected a UTF-8 JSON payload.');
         }
+        if (!asObject(parsed)) throw new WireError('invalid_request', 'Expected a JSON object frame.');
         body = undefined;
         headerBytes = 0;
         yield parsed;

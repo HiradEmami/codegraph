@@ -1,18 +1,22 @@
 import { once } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { countContextTokens, tokenizerVersion, type ContextEncoding } from '../context/token-budget';
 import {
   decodeRequest, encodeFrame, MAX_FRAME_BYTES, PROTOCOL_VERSION, readFrames, requestId, WireError,
 } from './wire';
 
+import { readGeneration, refreshGeneration } from './generations';
+
 interface Session {
   negotiated: boolean;
 }
 
 const ENCODINGS = ['cl100k_base', 'o200k_base'] as const;
-const CAPABILITIES = ['token_count'] as const;
+const CAPABILITIES = ['token_count', 'index_status', 'refresh_index'] as const;
 
-function evaluate(session: Session, method: string, params: Record<string, unknown>): object {
+async function evaluate(session: Session, method: string, params: Record<string, unknown>): Promise<object> {
   if (method === 'hello') {
     const versions = params.versions;
     if (Object.keys(params).length !== 1 || !Array.isArray(versions)
@@ -27,6 +31,19 @@ function evaluate(session: Session, method: string, params: Record<string, unkno
   }
   if (!session.negotiated) {
     throw new WireError('not_negotiated', 'Send hello before requesting an operation.');
+  }
+  if (method === 'index_status' || method === 'refresh_index') {
+    const { workspace, store, rebuild } = params;
+    if (typeof workspace !== 'string' || typeof store !== 'string'
+        || Object.keys(params).some(key => !['workspace', 'store', 'rebuild'].includes(key))
+        || (method === 'index_status' && rebuild !== undefined)
+        || (rebuild !== undefined && typeof rebuild !== 'boolean')) {
+      throw new WireError('invalid_parameters', 'Provide an explicit workspace and generation store.');
+    }
+    if (method === 'index_status') return { generation: readGeneration(workspace, store) };
+    const packageData = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'));
+    const suffix = packageData.pelagionArtifactCommit ? '+pelagion.' + packageData.pelagionArtifactCommit : '';
+    return { generation: await refreshGeneration(workspace, store, packageData.version + suffix, { rebuild }) };
   }
   if (method !== 'token_count') {
     throw new WireError('unsupported_operation', 'The requested operation is unavailable.');
@@ -65,7 +82,7 @@ export async function serveStdio(input: Readable, output: Writable): Promise<voi
         response = {
           version: PROTOCOL_VERSION,
           id: request.id,
-          result: evaluate(session, request.method, request.params),
+          result: await evaluate(session, request.method, request.params),
         };
       } catch (error) {
         response = errorResponse(requestId(data), error);

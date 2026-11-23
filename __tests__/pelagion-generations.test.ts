@@ -9,6 +9,8 @@ import {
   openPublishedGraph, readGeneration, readPublishedSource, refreshGeneration, searchPublishedSymbols,
 } from '../src/pelagion/generations';
 
+import { comparePublishedSnapshots, readRelationships } from '../src/pelagion/relationships';
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pelagion-generation-'));
   const workspace = path.join(root, 'workspace');
@@ -104,6 +106,35 @@ describe('Pelagion generation publication', () => {
       expect(next.generation).not.toBe(initial.generation);
       expect(() => readPublishedSource(workspace, store, initial.generation, range))
         .toThrow(expect.objectContaining({ code: 'stale_generation' }));
+    } finally {
+      cleanup(root);
+    }
+  }, 60_000);
+
+  it('pages Python relationships and compares captured file identities', async () => {
+    const { root, workspace, store, clean } = fixture();
+    try {
+      source(workspace, 'example.py', [
+        'def helper():', '    return 1', '', 'def task():', '    first = helper()', '    return first + helper()', '',
+      ].join('\n'));
+      const before = await refreshGeneration(workspace, store, 'test-engine');
+      const request = { workspace, store, generation: before.generation, scope: 'symbol',
+        selector: { path: 'example.py', name: 'task' }, direction: 'outgoing', limit: 1, offset: 0 };
+      expect(readRelationships('relationships', request)).toMatchObject({
+        generation: before, next_offset: 1,
+        edges: [{ kind: 'calls', source: { name: 'task' }, target: { name: 'helper' },
+          occurrence: { path: 'example.py', start_line: 5, end_line: 5 } }],
+      });
+      expect(readRelationships('relationships', { ...request, offset: 1 })).toMatchObject({ next_offset: null });
+      source(workspace, 'addition.py', 'value = 2\n');
+      const after = await refreshGeneration(workspace, clean, 'test-engine');
+      const comparison = {
+        before: { workspace, store, generation: before.generation },
+        after: { workspace, store: clean, generation: after.generation }, limit: 10, offset: 0,
+      };
+      expect(comparePublishedSnapshots(comparison)).toMatchObject({ before, after, next_offset: null,
+        files: [{ path: 'addition.py', before_sha256: null, after_sha256: expect.stringMatching(/^[0-9a-f]{64}$/) }],
+      });
     } finally {
       cleanup(root);
     }

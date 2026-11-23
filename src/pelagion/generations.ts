@@ -23,7 +23,7 @@ const CONFIG_NAMES = [
 ];
 const SETTINGS = ['CODEGRAPH_KERNEL', 'CODEGRAPH_MAX_FILE_SIZE_BYTES', 'CODEGRAPH_DIR'];
 
-interface SourceFile {
+export interface SourceFile {
   path: string;
   sha256: string | null;
   bytes: number;
@@ -313,19 +313,26 @@ function indexedFiles(selected: PublishedSource): Map<string, SourceFile> {
   return new Map(value.files.map(file => [file.path, file]));
 }
 
-interface SourceRange {
+export interface SourceRange {
   path: string;
   sha256: string;
   start_line: number;
   end_line: number;
 }
 
-function sourceRange(files: Map<string, SourceFile>, sourcePath: string, start: number, end: number): SourceRange {
+export function sourceRange(files: Map<string, SourceFile>, sourcePath: string, start: number, end: number): SourceRange {
   const matched = files.get(sourcePath);
   if (!matched?.sha256 || matched.excluded !== null || !DIGEST.test(matched.sha256)) {
     throw new WireError('source_unavailable', 'No admitted bytes exist for the requested source.');
   }
   return { path: sourcePath, sha256: matched.sha256, start_line: start, end_line: end };
+}
+
+export function capturePublishedGeneration(workspace: string, store: string, generation: string) {
+  const selected = selectedGeneration(workspace, store, generation);
+  const database = path.join(selected.directory, 'graph.sqlite3');
+  verifyFile(database);
+  return { receipt: selected.receipt, files: indexedFiles(selected), database };
 }
 
 export async function searchPublishedSymbols(

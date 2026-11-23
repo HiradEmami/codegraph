@@ -9,12 +9,17 @@ import {
 
 import { readGeneration, readPublishedSource, refreshGeneration, searchPublishedSymbols } from './generations';
 
+import { comparePublishedSnapshots, GRAPH_OPERATIONS, readRelationships } from './relationships';
+
 interface Session {
   negotiated: boolean;
 }
 
 const ENCODINGS = ['cl100k_base', 'o200k_base'] as const;
-const CAPABILITIES = ['token_count', 'index_status', 'refresh_index', 'search_symbols', 'read_source'] as const;
+const CAPABILITIES = [
+  'token_count', 'index_status', 'refresh_index', 'search_symbols', 'read_source',
+  ...GRAPH_OPERATIONS, 'compare_snapshots',
+] as const;
 const DIGEST = /^[0-9a-f]{64}$/;
 
 function validDigest(value: unknown): value is string {
@@ -80,6 +85,9 @@ async function evaluate(session: Session, method: string, params: Record<string,
     }
     return await searchPublishedSymbols(workspace, store, generation, query, limit);
   }
+  if (method === 'compare_snapshots') return comparePublishedSnapshots(params);
+  const graphOperation = GRAPH_OPERATIONS.find(operation => operation === method);
+  if (graphOperation !== undefined) return readRelationships(graphOperation, params);
   if (method !== 'token_count') {
     throw new WireError('unsupported_operation', 'The requested operation is unavailable.');
   }

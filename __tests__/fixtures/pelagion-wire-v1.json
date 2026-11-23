@@ -1,0 +1,24 @@
+{
+  "exchanges": [
+    {
+      "request": {"version": 1, "id": "early", "method": "token_count", "params": {"text": "hello", "encoding": "cl100k_base"}},
+      "response": {"version": 1, "id": "early", "error": {"code": "not_negotiated", "message": "Send hello before requesting an operation."}}
+    },
+    {
+      "request": {"version": 1, "id": "no-overlap", "method": "hello", "params": {"versions": [2]}},
+      "response": {"version": 1, "id": "no-overlap", "error": {"code": "unsupported_version", "message": "The client and engine have no common protocol version."}}
+    },
+    {
+      "request": {"version": 1, "id": "hello", "method": "hello", "params": {"versions": [2, 1]}},
+      "response": {"version": 1, "id": "hello", "result": {"version": 1, "maxFrameBytes": 1048576, "capabilities": ["token_count"], "encodings": ["cl100k_base", "o200k_base"]}}
+    },
+    {
+      "request": {"version": 1, "id": "count", "method": "token_count", "params": {"text": "hello", "encoding": "cl100k_base"}},
+      "response": {"version": 1, "id": "count", "result": {"encoding": "cl100k_base", "implementation": "js-tiktoken", "implementationVersion": "1.0.21", "count": 1}}
+    },
+    {
+      "request": {"version": 1, "id": "unknown", "method": "token_count", "params": {"text": "hello", "encoding": "unknown"}},
+      "response": {"version": 1, "id": "unknown", "error": {"code": "invalid_parameters", "message": "Provide valid UTF-8 text and a negotiated encoding."}}
+    }
+  ]
+}

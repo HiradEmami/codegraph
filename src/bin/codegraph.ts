@@ -2884,6 +2884,14 @@ program
  * the version affordance in `codegraph --help`.
  */
 program
+  .command('pelagion-stdio', { hidden: true })
+  .description('Serve the bounded Pelagion engine protocol on stdin and stdout')
+  .action(async () => {
+    const { serveStdio } = await import('../pelagion/stdio');
+    await serveStdio(process.stdin, process.stdout);
+  });
+
+program
   .command('version')
   .description('Print the installed CodeGraph version (also: -v, --version)')
   .action(() => {

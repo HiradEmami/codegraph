@@ -68,7 +68,7 @@ export function parseContextTokenBudget(value: unknown): ContextTokenBudget {
 // the two explicitly supported encoders are retained; queries never download ranks.
 const encoders = new Map<ContextEncoding, Tiktoken>();
 let implementationVersion: string | undefined;
-function tokenizerVersion(): string {
+export function tokenizerVersion(): string {
   if (!implementationVersion) {
     const metadata = require(join(dirname(require.resolve('js-tiktoken/lite')), '..', 'package.json')) as { name?: string; version?: string };
     if (metadata.name !== 'js-tiktoken' || typeof metadata.version !== 'string') {

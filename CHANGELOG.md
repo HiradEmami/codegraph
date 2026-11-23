@@ -27,6 +27,8 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New Features
 
+- Explore responses can use an explicit tokenizer and token limit, returning attributed source evidence with duplicate removal and visible omissions.
+
 - **Codex and Astra read project guidance from `AGENTS.md`.** The canonical agent guide now lives in `AGENTS.md` (with a nested `docs/AGENTS.md` for long validation notes); `CLAUDE.md` is a thin `@AGENTS.md` wrapper for Claude Code. Codex/Astra no longer miss the old CLAUDE-only instructions.
 
 - **Next.js pages and their navigation are in the graph.** App Router pages (`app/(group)/blog/[slug]/page.tsx` → `/blog/:slug`) and Pages Router pages are routes bound to the component they export, and `<Link href>`, an internal `<a href>`, `router.push` / `router.replace` (`next/navigation` and `next/router`), `redirect()` / `permanentRedirect()` and the middleware's `NextResponse.redirect(…)` are `navigates` edges between them. `app/api/**/route.ts` exports (`GET`, `POST`, …) are endpoints bound to their functions, and `pages/api/*` handlers are `ANY /api/…`. Re-index after upgrading.
@@ -48,6 +50,7 @@ and adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixes
 
 - The Claude Code prompt hook no longer runs on the task-notification messages Claude Code injects when a background agent finishes, removing a multi-second stall on every such turn. (#1832)
+- Python calls follow their imported module, alias and scope, including supported explicit package mappings, instead of drifting to unrelated same-named definitions; re-index existing projects to refresh their relationships.
 
 - Rust calls on `self` now stay with the enclosing type instead of linking to an unrelated type’s same-named method. Thanks @L4XB. (#1861)
 

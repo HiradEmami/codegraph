@@ -459,6 +459,10 @@ impl<'t> Walker<'t> {
         let kind = node.kind();
         self.maybe_capture_fn_refs(node);
 
+        if matches!(kind, "import_statement" | "import_from_statement") {
+            self.extract_import(node);
+            return;
+        }
         if kind == "call" {
             self.extract_call(node);
         }
@@ -719,7 +723,7 @@ impl<'t> Walker<'t> {
                     });
                     if let Some(r) = recv_ident {
                         let receiver_name = self.text(r);
-                        if !matches!(receiver_name, "self" | "this" | "cls" | "super") {
+                        if !matches!(receiver_name, "this" | "super") {
                             callee_name = format!("{receiver_name}.{method_name}");
                         } else {
                             callee_name = method_name.to_string();
@@ -731,6 +735,9 @@ impl<'t> Walker<'t> {
                         // TreeSitterExtractor.extractCall.
                         let Some(inner) = self.plain_inner_callee(r) else { return };
                         callee_name = format!("{inner}().{method_name}");
+                    } else if let Some(r) = receiver.filter(|r| r.kind() == "attribute") {
+                        let Some(receiver_name) = self.plain_name_chain(r) else { return };
+                        callee_name = format!("{receiver_name}.{method_name}");
                     } else {
                         callee_name = method_name.to_string();
                     }
@@ -752,8 +759,11 @@ impl<'t> Walker<'t> {
     /// The callee of a call receiver when it is a plain identifier or attribute
     /// chain (`make`, `d.setdefault`), whitespace stripped (#1683).
     fn plain_inner_callee(&self, call: Node<'t>) -> Option<String> {
-        let inner = call.child_by_field_name("function")?;
-        let text: String = self.text(inner).chars().filter(|c| !c.is_whitespace()).collect();
+        self.plain_name_chain(call.child_by_field_name("function")?)
+    }
+
+    fn plain_name_chain(&self, node: Node<'t>) -> Option<String> {
+        let text: String = self.text(node).chars().filter(|c| !c.is_whitespace()).collect();
         if text.is_empty() {
             return None;
         }

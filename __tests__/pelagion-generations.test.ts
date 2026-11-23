@@ -1,10 +1,13 @@
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { openPublishedGraph, readGeneration, refreshGeneration } from '../src/pelagion/generations';
+import {
+  openPublishedGraph, readGeneration, readPublishedSource, refreshGeneration, searchPublishedSymbols,
+} from '../src/pelagion/generations';
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pelagion-generation-'));
@@ -68,6 +71,39 @@ describe('Pelagion generation publication', () => {
       expect(incremental.configurationDigest).not.toBe(initial.configurationDigest);
       expect(incremental.sourceDigest).not.toBe(initial.sourceDigest);
       expect(incremental).toEqual(rebuilt);
+    } finally {
+      cleanup(root);
+    }
+  }, 60_000);
+
+  it('binds typed symbol and source ranges to their published generation and bytes', async () => {
+    const { root, workspace, store } = fixture();
+    try {
+      const content = 'def pelagion_unique_fixture_symbol():\n    return 1\n';
+      source(workspace, 'nested/demo.py', content);
+      const initial = await refreshGeneration(workspace, store, 'test-engine');
+      const known = await searchPublishedSymbols(workspace, store, initial.generation, 'pelagion_unique_fixture_symbol', 5);
+      const range = {
+        path: 'nested/demo.py',
+        sha256: createHash('sha256').update(content).digest('hex'),
+        start_line: 1,
+        end_line: 2,
+      };
+      expect(known).toMatchObject({
+        generation: initial.generation,
+        symbols: [{ name: 'pelagion_unique_fixture_symbol', source: range }],
+        omitted: 0,
+        partial: false,
+      });
+      expect(readPublishedSource(workspace, store, initial.generation, range))
+        .toEqual({ generation: initial.generation, source: range });
+      expect(await searchPublishedSymbols(workspace, store, initial.generation, 'absent_zz10980', 5))
+        .toMatchObject({ symbols: [], partial: false });
+      source(workspace, 'nested/demo.py', content.replace('1', '2'));
+      const next = await refreshGeneration(workspace, store, 'test-engine');
+      expect(next.generation).not.toBe(initial.generation);
+      expect(() => readPublishedSource(workspace, store, initial.generation, range))
+        .toThrow(expect.objectContaining({ code: 'stale_generation' }));
     } finally {
       cleanup(root);
     }

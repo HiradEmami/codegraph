@@ -264,7 +264,13 @@ export function readGeneration(workspaceInput: string, storeInput: string): Gene
   }
 }
 
-export async function openPublishedGraph(workspaceInput: string, storeInput: string): Promise<CodeGraph> {
+interface PublishedSource {
+  readonly directory: string;
+  readonly workspace: string;
+  readonly receipt: GenerationReceipt;
+}
+
+function selectedGeneration(workspaceInput: string, storeInput: string, expected?: string): PublishedSource {
   const workspace = plainDirectory(workspaceInput);
   const store = plainDirectory(storeInput);
   const metadata = path.join(store, 'generations.sqlite3');
@@ -275,12 +281,90 @@ export async function openPublishedGraph(workspaceInput: string, storeInput: str
     if (!published) throw new WireError('index_missing', 'No generation has been published.');
     const directory = plainDirectory(path.join(store, published.location));
     if (path.dirname(directory) !== store) throw new WireError('invalid_generation', 'The published generation is invalid.');
-    const databasePath = path.join(directory, 'graph.sqlite3');
-    verifyFile(databasePath);
-    return await CodeGraph.openGeneration(workspace, databasePath, 'read');
+    if (expected !== undefined && published.receipt.generation !== expected) {
+      throw new WireError('stale_generation', 'The requested generation is no longer current.');
+    }
+    return { directory, workspace, receipt: published.receipt };
   } finally {
     db.close();
   }
+}
+
+async function openSelection(selected: PublishedSource): Promise<CodeGraph> {
+  const databasePath = path.join(selected.directory, 'graph.sqlite3');
+  verifyFile(databasePath);
+  return await CodeGraph.openGeneration(selected.workspace, databasePath, 'read');
+}
+
+export async function openPublishedGraph(workspaceInput: string, storeInput: string): Promise<CodeGraph> {
+  return await openSelection(selectedGeneration(workspaceInput, storeInput));
+}
+
+function indexedFiles(selected: PublishedSource): Map<string, SourceFile> {
+  const manifest = path.join(selected.directory, 'manifest.json');
+  verifyFile(manifest);
+  if (fs.statSync(manifest).size > 32 * 1024 * 1024) {
+    throw new WireError('generation_budget', 'The generation manifest exceeds the read budget.');
+  }
+  const value = JSON.parse(fs.readFileSync(manifest, 'utf8')) as { files: SourceFile[]; ignoredExtensions: unknown };
+  if (!Array.isArray(value.files) || sha256(JSON.stringify([value.files, value.ignoredExtensions])) !== selected.receipt.sourceDigest) {
+    throw new WireError('invalid_generation', 'The published source manifest does not match its identity.');
+  }
+  return new Map(value.files.map(file => [file.path, file]));
+}
+
+interface SourceRange {
+  path: string;
+  sha256: string;
+  start_line: number;
+  end_line: number;
+}
+
+function sourceRange(files: Map<string, SourceFile>, sourcePath: string, start: number, end: number): SourceRange {
+  const matched = files.get(sourcePath);
+  if (!matched?.sha256 || matched.excluded !== null || !DIGEST.test(matched.sha256)) {
+    throw new WireError('source_unavailable', 'No admitted bytes exist for the requested source.');
+  }
+  return { path: sourcePath, sha256: matched.sha256, start_line: start, end_line: end };
+}
+
+export async function searchPublishedSymbols(
+  workspace: string, store: string, generation: string, query: string, limit: number,
+): Promise<object> {
+  const selected = selectedGeneration(workspace, store, generation);
+  const files = indexedFiles(selected);
+  const graph = await openSelection(selected);
+  try {
+    const matches = graph.searchNodes(query, { limit: limit + 1 });
+    if (!matches.length && selected.receipt.coverage.errors > 0) {
+      throw new WireError('index_incomplete', 'Indexed parser failures prevent an empty-search conclusion.');
+    }
+    return {
+      generation,
+      symbols: matches.slice(0, limit).map(({ node }) => ({
+        name: node.name,
+        qualified_name: node.qualifiedName,
+        kind: node.kind,
+        source: sourceRange(files, node.filePath, node.startLine, node.endLine),
+      })),
+      omitted: Math.max(0, matches.length - limit),
+      partial: Boolean(selected.receipt.coverage.errors || selected.receipt.coverage.excluded
+        || selected.receipt.coverage.unsupported),
+    };
+  } finally {
+    graph.close();
+  }
+}
+
+export function readPublishedSource(
+  workspace: string, store: string, generation: string, requested: SourceRange,
+): object {
+  const selected = selectedGeneration(workspace, store, generation);
+  const file = sourceRange(indexedFiles(selected), requested.path, requested.start_line, requested.end_line);
+  if (file.sha256 !== requested.sha256) {
+    throw new WireError('stale_source', 'The requested digest differs from the published source.');
+  }
+  return { generation, source: file };
 }
 
 export async function refreshGeneration(

@@ -10,7 +10,7 @@
     },
     {
       "request": {"version": 1, "id": "hello", "method": "hello", "params": {"versions": [2, 1]}},
-      "response": {"version": 1, "id": "hello", "result": {"version": 1, "maxFrameBytes": 1048576, "capabilities": ["token_count", "index_status", "refresh_index"], "encodings": ["cl100k_base", "o200k_base"]}}
+      "response": {"version": 1, "id": "hello", "result": {"version": 1, "maxFrameBytes": 1048576, "capabilities": ["token_count", "index_status", "refresh_index", "search_symbols", "read_source"], "encodings": ["cl100k_base", "o200k_base"]}}
     },
     {
       "request": {"version": 1, "id": "count", "method": "token_count", "params": {"text": "hello", "encoding": "cl100k_base"}},

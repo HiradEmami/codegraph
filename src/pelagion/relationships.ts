@@ -182,8 +182,24 @@ export function readRelationships(operation: GraphOperation, input: Record<strin
   }
 }
 
+function snapshotSymbol(capture: ReturnType<typeof resolveCapture>, selector: Selector | null) {
+  if (selector === null) return null;
+  const { db } = createDatabase(capture.database, { readOnly: true });
+  try {
+    const id = selectedNode(db, selector);
+    if (id === undefined) return null;
+    const row = db.prepare('SELECT signature FROM nodes WHERE id = ?').get(id) as { signature: string | null };
+    return { symbol: nodeEvidence(db, capture.files, id), signature: row.signature?.slice(0, 4096) ?? null,
+      signature_truncated: (row.signature?.length ?? 0) > 4096 };
+  } finally {
+    db.close();
+  }
+}
+
 export function comparePublishedSnapshots(input: Record<string, unknown>): object {
-  const params = object(input, ['before', 'after', 'limit', 'offset']);
+  const params = object(input, ['before', 'after', 'selector', 'limit', 'offset']);
+  const selected = params.selector === null ? null : object(params.selector, ['path', 'name']);
+  const selector = selected === null ? null : { path: text(selected.path, 4096), name: text(selected.name, 256) };
   const window = windowOf(params);
   const before = resolveCapture(object(params.before, ['workspace', 'store', 'generation']));
   const after = resolveCapture(object(params.after, ['workspace', 'store', 'generation']));
@@ -208,7 +224,12 @@ export function comparePublishedSnapshots(input: Record<string, unknown>): objec
   }
   const partial = [before, after].some(({ receipt }) =>
     receipt.coverage.errors || receipt.coverage.excluded || receipt.coverage.unsupported);
+  const symbol_before = snapshotSymbol(before, selector);
+  const symbol_after = snapshotSymbol(after, selector);
+  const uncertainty = unavailable || partial ? ['partial_snapshot_coverage'] : [];
+  if (symbol_before?.signature_truncated || symbol_after?.signature_truncated) uncertainty.push('truncated_signature');
   return { before: before.receipt, after: after.receipt, files: files.slice(0, window.limit),
+    symbol_before, symbol_after,
     next_offset: nextOffset(window, files.length),
-    uncertainty: unavailable || partial ? ['partial_snapshot_coverage'] : [] };
+    uncertainty };
 }

@@ -130,9 +130,11 @@ describe('Pelagion generation publication', () => {
       const after = await refreshGeneration(workspace, clean, 'test-engine');
       const comparison = {
         before: { workspace, store, generation: before.generation },
-        after: { workspace, store: clean, generation: after.generation }, limit: 10, offset: 0,
+        after: { workspace, store: clean, generation: after.generation },
+        selector: { path: 'example.py', name: 'task' }, limit: 10, offset: 0,
       };
       expect(comparePublishedSnapshots(comparison)).toMatchObject({ before, after, next_offset: null,
+        symbol_before: { symbol: { name: 'task' } }, symbol_after: { symbol: { name: 'task' } },
         files: [{ path: 'addition.py', before_sha256: null, after_sha256: expect.stringMatching(/^[0-9a-f]{64}$/) }],
       });
     } finally {
